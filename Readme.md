@@ -6,7 +6,22 @@ Written in Rust as a project to learn more about the language and associated too
 
 ## Usage
 
-TBD
+You can run with `cargo run` as usual. 
+It is recommended to build the binary (`cargo build --release`) and use that binary ina  cron job that runs regularly.
+
+## Configuration
+
+The application requires a set of environment variables to be set-up:
+
+```bash
+export TP_CONSUMER_KEY="consumer_key"
+export TP_CONSUMER_SECRET="consumer_secret"
+export TP_ACCESS_KEY="access_key"
+export TP_ACCESS_SECRET="access_secret"
+export TP_USER_HANDLE="yourHandle"
+```
+
+You can use an `.env` file to define the values. The file must be at the same location you runt he executable from. Otherwise, just set up the environemnt variables.
 
 # Contribution policy
 

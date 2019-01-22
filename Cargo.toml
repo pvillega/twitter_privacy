@@ -6,3 +6,6 @@ edition = "2018"
 license = "Apache-2.0"
 
 [dependencies]
+dotenv = "0.13.0" # Manage .env files
+log = "0.4" # logger
+pretty_env_logger = "0.3.0" # logger to std err on top of `log`
