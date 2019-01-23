@@ -20,7 +20,10 @@ fn main() {
     // Create the event loop that will drive this server
     let mut core = Core::new().unwrap();
     let config = config::Config::load(&mut core);
+    // dbg!(&config);
+    
     let handle = core.handle();
+
 
     let user_info = core
         .run(egg_mode::user::show(

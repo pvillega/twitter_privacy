@@ -2,6 +2,7 @@ use egg_mode;
 use std::env;
 use tokio_core::reactor::Core;
 
+#[derive(Debug)]
 pub struct Config {
     pub token: egg_mode::Token,
     pub screen_name: String,
