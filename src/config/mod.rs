@@ -6,6 +6,7 @@ use tokio_core::reactor::Core;
 pub struct Config {
     pub token: egg_mode::Token,
     pub screen_name: String,
+    pub preserve_days: i64
 }
 
 impl Config {
@@ -16,6 +17,7 @@ impl Config {
         let access_key = env::var("TP_ACCESS_KEY").unwrap();
         let access_secret = env::var("TP_ACCESS_SECRET").unwrap();
         let username = env::var("TP_USER_HANDLE").unwrap();
+        let preserve_days: i64 = env::var("TP_PRESERVE_DAYS").unwrap().parse().unwrap();
 
         let con_token = egg_mode::KeyPair::new(consumer_key, consumer_secret);
         let access_token = egg_mode::KeyPair::new(access_key, access_secret);
@@ -35,6 +37,7 @@ impl Config {
             Config {
                 token: token,
                 screen_name: username,
+                preserve_days: preserve_days
             }
         }
     }

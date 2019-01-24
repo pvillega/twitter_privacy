@@ -40,10 +40,10 @@ fn main() {
     let timeline =
         tweet::user_timeline(&user_info.id, true, true, &config.token, &handle).with_page_size(25);
 
-    process_timeline(&mut core, timeline);
+    process_timeline(&mut core, timeline, config.preserve_days);
 }
 
-fn process_timeline(mut core: &mut Core, timeline: tweet::Timeline) {
+fn process_timeline(mut core: &mut Core, timeline: tweet::Timeline, preserve_days: i64) {
     let future_timeline = timeline.older(None);
     let (timeline, feed) = core.run(future_timeline).unwrap();
 
@@ -52,7 +52,7 @@ fn process_timeline(mut core: &mut Core, timeline: tweet::Timeline) {
     } else {
         let utc: DateTime<Utc> = Utc::now();
         for tweet in &feed {
-            if utc.signed_duration_since(tweet.created_at) > Duration::days(60) {
+            if utc.signed_duration_since(tweet.created_at) > Duration::days(preserve_days) {
                 info!(
                     "<@{}> [{}] {}",
                     tweet.user.as_ref().unwrap().screen_name,
@@ -62,6 +62,6 @@ fn process_timeline(mut core: &mut Core, timeline: tweet::Timeline) {
             }
         }
 
-        process_timeline(&mut core, timeline);
+        process_timeline(&mut core, timeline, preserve_days);
     }
 }
