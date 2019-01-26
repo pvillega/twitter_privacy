@@ -37,31 +37,38 @@ fn main() {
 
     info!("{} (@{})", user_info.name, user_info.screen_name);
 
-    let timeline =
+    let user_timeline =
         tweet::user_timeline(&user_info.id, true, true, &config.token, &handle).with_page_size(25);
 
-    process_timeline(&mut core, timeline, config.preserve_days);
+    process_timeline("User Timeline", &mut core, user_timeline, config.preserve_days);
+
+    let likes_timeline =
+        tweet::liked_by(&user_info.id, &config.token, &handle).with_page_size(25);
+
+    process_timeline("Likes Timeline", &mut core, likes_timeline, config.preserve_days);
 }
 
-fn process_timeline(mut core: &mut Core, timeline: tweet::Timeline, preserve_days: i64) {
+fn process_timeline(name: &str, mut core: &mut Core, timeline: tweet::Timeline, preserve_days: i64) {
     let future_timeline = timeline.older(None);
     let (timeline, feed) = core.run(future_timeline).unwrap();
 
     if feed.is_empty() {
-        info!("We got to the end of the timeline");
+        info!("We got to the end of the {} timeline", name);
     } else {
         let utc: DateTime<Utc> = Utc::now();
         for tweet in &feed {
             if utc.signed_duration_since(tweet.created_at) > Duration::days(preserve_days) {
                 info!(
-                    "<@{}> [{}] {}",
+                    "<@{}> [{}] F:{}/RT:{} {}",
                     tweet.user.as_ref().unwrap().screen_name,
                     tweet.created_at,
+                    tweet.favorited.unwrap_or(false),
+                    tweet.retweeted.unwrap_or(false),
                     tweet.text
                 );
             }
         }
 
-        process_timeline(&mut core, timeline, preserve_days);
+        process_timeline(name, &mut core, timeline, preserve_days);
     }
 }

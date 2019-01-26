@@ -1,6 +1,12 @@
 # Twitter Privacy
 
-A tool to erase old tweets from your timeline. 
+A tool to erase old tweets from your timeline. It will find all tweets older than a certain amount of days and it will:
+
+- erase tweets you published
+- undo retweets
+- undo favourite/likes
+
+Note that unfortunately some old tweets are not accessible via the API, so you can't get rid of them.
 
 Written in Rust as a project to learn more about the language and associated tooling. Beware code quality :) Feedback always welcome.
 
