@@ -1,5 +1,5 @@
 [package]
-name = "twitter-privacy-rust"
+name = "twitter_privacy"
 version = "0.1.0"
 authors = ["Pere Villega <pvillega@aracon.com>"]
 edition = "2018"
