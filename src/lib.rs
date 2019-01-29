@@ -10,12 +10,22 @@ use egg_mode::tweet;
 use egg_mode::tweet::Timeline;
 use tokio_core::reactor::Core;
 
-pub fn clear_old_tweets(core: &mut Core) {
-    // load configuration for
-    let config = config::Config::load(core);
+/// Tries to erase old tweets for a user account
+/// 
+/// This method will load configuration from environment variables as described in Readme
+/// and interact with that user account via Twitter API to erase tweets older than a configured 
+/// amount of days.
+/// 
+/// The logic for loading configuration is purposedly included in this call so we can propagate 
+/// all errors to the caller
+pub fn clear_old_tweets(core: &mut Core) -> Result<(), String> {
+    
+    let config = config::Config::load(core)?;
     // dbg!(&config);
 
     clear_user_timelines(&config, core);
+
+    Ok(())
 }
 
 fn clear_user_timelines(config: &Config, core: &mut Core) {

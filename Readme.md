@@ -25,6 +25,7 @@ export TP_CONSUMER_SECRET="consumer_secret"
 export TP_ACCESS_KEY="access_key"
 export TP_ACCESS_SECRET="access_secret"
 export TP_USER_HANDLE="yourHandle"
+export TP_PRESERVE_DAYS=60
 ```
 
 You can use an `.env` file to define the values. The file must be at the same location you runt he executable from. Otherwise, just set up the environemnt variables.
