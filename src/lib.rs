@@ -304,7 +304,7 @@ mod tests {
             fn work_on_dates_as_expected(days_past: u32) -> bool {
                 let now = Utc::now().timestamp();
                 // not more than 10 years ago for testing purposes
-                let bounded = (days_past % (365 * 10)) as i64;
+                let bounded = i64::from(days_past % (365 * 10));
                 let seconds_past = bounded * 24 * 60 * 60;
 
                 let dt = NaiveDateTime::from_timestamp(now - seconds_past, 0);

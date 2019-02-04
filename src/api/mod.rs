@@ -11,7 +11,7 @@ pub trait TwitterAPI {
     fn validate_token(&mut self, token: &egg_mode::Token) -> Result<(), String>;
 
     /// Returns the unique user id (an u64) for the user with the given screen name
-    fn get_user_id(&mut self, screen_name: &String, token: &egg_mode::Token)
+    fn get_user_id(&mut self, screen_name: &str, token: &egg_mode::Token)
         -> Result<u64, String>;
 
     /// Returns the next page available of user timeline for given user id, which contains tweets published (or retweeted) by user
@@ -50,7 +50,7 @@ impl<'a> TwitterAPI for RealAPI<'a> {
 
     fn get_user_id(
         &mut self,
-        screen_name: &String,
+        screen_name: &str,
         token: &egg_mode::Token,
     ) -> Result<u64, String> {
         let handle = self.core.handle();
@@ -208,7 +208,7 @@ impl TwitterAPI for TestAPI {
 
     fn get_user_id(
         &mut self,
-        _screen_name: &String,
+        _screen_name: &str,
         _token: &egg_mode::Token,
     ) -> Result<u64, String> {
         self.methods_called_in_order.push(String::from("get_user_id"));
