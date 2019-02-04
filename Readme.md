@@ -8,7 +8,8 @@ A tool to erase old tweets from your timeline. It will find all tweets older tha
 
 Note that unfortunately some old tweets are not accessible via the API, so you can't get rid of them.
 
-Written in Rust as a project to learn more about the language and associated tooling. Beware code quality :) Feedback always welcome.
+Written in Rust as a project to learn more about the language and associated tooling. So you may see things that don't make much sense,
+like useless tests done just to play with a library. Beware code quality :) Feedback always welcome.
 
 ## Usage
 

@@ -1,87 +1,156 @@
+mod env;
+
+use crate::api::TwitterAPI;
 use egg_mode;
-use std::env;
-use std::env::VarError;
-use tokio_core::reactor::Core;
+pub use env::EnvValues;
+
+#[cfg(test)]
+use std::default::Default;
 
 #[derive(Debug)]
 pub struct Config {
     pub token: egg_mode::Token,
     pub screen_name: String,
+    pub user_id: u64,
     pub preserve_days: i64,
 }
 
 impl Config {
-    // list of environment variables we will load
-    const CONSUMER_KEY : &'static str = "TP_CONSUMER_KEY";
-    const CONSUMER_SECRET : &'static str = "TP_CONSUMER_SECRET";
-    const ACCESS_KEY : &'static str = "TP_ACCESS_KEY";
-    const ACCESS_SECRET : &'static str = "TP_ACCESS_SECRET";
-    const USER_HANDLE : &'static str = "TP_USER_HANDLE";
-    const PRESERVE_DAYS : &'static str = "TP_PRESERVE_DAYS";
-
-    /// Reads a set of environment variables and returns a `Config` object
-    /// which contains credentials that can be used with the Twitter API
-    /// 
-    /// # Impure
-    /// 
-    /// The method does a connection to Twitter to verify the values in the 
-    /// environment variables correspond to valid tokens.
-    /// 
+    /// Uses a set of environment variables and a trait that provides access to the Twitter API
+    /// to construct a configuration object, or return an error if that can't be done
+    ///
+    /// # Side Effects
+    ///
+    /// The `api` parameter may trigger calls to Twitter API
+    ///
     /// # Error scenarios
-    /// 
-    /// The method will return an Err(_) if:
-    /// 
-    /// - any of the needed environment variables is missing or the wrong format
-    /// - the token for the user (any of consumer or access keys and secrets) are invalid and Twitter rejects them
-    /// 
-    pub fn load(core: &mut Core) -> Result<Self, String> {
-        //We load configuration from environment. Fail early (using ?) if something is wrong
-        let consumer_key = Config::get_env_var(Config::CONSUMER_KEY)?;
-        let consumer_secret = Config::get_env_var(Config::CONSUMER_SECRET)?;
-        let access_key = Config::get_env_var(Config::ACCESS_KEY)?;
-        let access_secret = Config::get_env_var(Config::ACCESS_SECRET)?;
-        let username = Config::get_env_var(Config::USER_HANDLE)?;
-        let preserve_days = Config::get_env_var(Config::PRESERVE_DAYS)?;
-        // on this code (parse()) the macro try! or the shortcut '?' break inference, so we need to unroll them
-        let preserve_days: i64 = match preserve_days.parse::<i64>() {
-            Ok(i) => i,
-            Err(e) => return Err(format!("Error parsing {} to an i64: {}", Config::PRESERVE_DAYS, e)),
-        };
-
-        let con_token = egg_mode::KeyPair::new(consumer_key, consumer_secret);
-        let access_token = egg_mode::KeyPair::new(access_key, access_secret);
+    ///
+    /// The method will return an `Err` if:
+    ///
+    /// - the values in `EnvValues` aren't valid tokens to interact with the API
+    /// - the `api` parameter returns some error when we use its methods
+    ///
+    pub fn load<API: TwitterAPI>(env: EnvValues, api: &mut API) -> Result<Config, String> {
+        let con_token = egg_mode::KeyPair::new(env.consumer_key, env.consumer_secret);
+        let access_token = egg_mode::KeyPair::new(env.access_key, env.access_secret);
         let token = egg_mode::Token::Access {
             consumer: con_token,
             access: access_token,
         };
 
-        let handle = core.handle();
+        // if not valid, short circuit to Err
+        api.validate_token(&token)?;
 
-        if let Err(err) = core.run(egg_mode::verify_tokens(&token, &handle)) {
-            let msg = format!("We've hit an error using your tokens: {:?}. Invalid tokens, the application can't continue.", err);
-            Err(msg)
-        } else {
-            info!("Welcome back, {}!", username);
-            let cfg = Config {
-                token: token,
-                screen_name: username,
-                preserve_days: preserve_days,
-            };
-            Ok(cfg)
+        info!("Welcome back, {}!", &env.user_handle);
+
+        let user_id = api.get_user_id(&env.user_handle, &token)?;
+
+        let cfg = Config {
+            token: token,
+            screen_name: env.user_handle,
+            user_id: user_id,
+            preserve_days: env.preserve_days,
+        };
+
+        Ok(cfg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::TestAPI;
+    use quickcheck::{Arbitrary, Gen};
+
+    impl Arbitrary for EnvValues {
+        fn arbitrary<G: Gen>(g: &mut G) -> EnvValues {
+            EnvValues {
+                consumer_key: String::arbitrary(g),
+                consumer_secret: String::arbitrary(g),
+                access_key: String::arbitrary(g),
+                access_secret: String::arbitrary(g),
+                user_handle: String::arbitrary(g),
+                preserve_days: i64::arbitrary(g),
+            }
         }
     }
 
-    fn get_env_var(name: &'static str) -> Result<String, String> {
-        let map_if_err = Config::varerror_to_string(name);
-        env::var(name).map_err(map_if_err)
+    fn sample_env_values() -> EnvValues {
+        EnvValues {
+            consumer_key: String::from("ck"),
+            consumer_secret: String::from("cs"),
+            access_key: String::from("ak"),
+            access_secret: String::from("as"),
+            user_handle: String::from("uh"),
+            preserve_days: 1,
+        }
     }
 
-    fn varerror_to_string(name: &'static str) -> impl Fn(VarError) -> String {
-        move |v| match v {
-            VarError::NotPresent => format!("Environment variable {:?} not found", name),
-            VarError::NotUnicode(s) => {
-                format!("Environment variable {:?} was not valid unicode: {:?}", name, s)
-            }
+    #[test]
+    fn error_if_invalid_token() {
+        let mut api = TestAPI {
+            validate_token_answer: Err(String::from("bad token")),
+            ..Default::default()
+        };
+
+        // can't use assert_eq on the result as Config can't implement PartialEq trait
+        match Config::load(sample_env_values(), &mut api) {
+            Ok(_) => panic!("It should return an error"),
+            Err(e) => assert_eq!(e, "bad token"),
+        }
+    }
+
+    #[test]
+    fn error_if_api_token_fails() {
+        let mut api = TestAPI {
+            validate_token_answer: Err(String::from("api error")),
+            ..Default::default()
+        };
+
+        // can't use assert_eq on the result as Config can't implement PartialEq trait
+        match Config::load(sample_env_values(), &mut api) {
+            Ok(_) => panic!("It should return an error"),
+            Err(e) => assert_eq!(e, "api error"),
+        }
+    }
+
+    #[test]
+    fn error_if_api_user_id_fails() {
+        let mut api = TestAPI {
+            get_user_id_answer: Err(String::from("api error")),
+            ..Default::default()
+        };
+
+        // can't use assert_eq on the result as Config can't implement PartialEq trait
+        match Config::load(sample_env_values(), &mut api) {
+            Ok(_) => panic!("It should return an error"),
+            Err(e) => assert_eq!(e, "api error"),
+        }
+    }
+
+    quickcheck! {
+        fn config_has_expected_values(env_values: EnvValues, id: u64) -> bool {
+            let mut api = TestAPI {
+                get_user_id_answer: Ok(id),
+            ..Default::default()
+            };
+
+            let config = Config::load(env_values.clone(), &mut api).unwrap();
+
+            let id = config.user_id == id;
+            let name = config.screen_name == env_values.user_handle;
+            let days = config.preserve_days == env_values.preserve_days;
+            let token = match config.token {
+                egg_mode::Token::Bearer(_) => false,
+                egg_mode::Token::Access{consumer, access} => {
+                    consumer.key == env_values.consumer_key &&
+                    consumer.secret == env_values.consumer_secret &&
+                    access.key == env_values.access_key &&
+                    access.secret == env_values.access_secret
+                },
+            };
+
+            id && name && days && token
         }
     }
 }
