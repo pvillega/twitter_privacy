@@ -174,10 +174,13 @@ impl<'a> TwitterAPI for RealAPI<'a> {
     }
 
     fn unlike_tweet(&mut self, tweet: &Tweet) -> Result<(), APIError> {
-        info!("Requesting removal of tweet #{}", tweet.id);
-        let handle = self.core.handle();
-
         if tweet.favorited.unwrap_or(false) {
+            info!(
+                "Requesting unlike of tweet #{} posted at {}",
+                tweet.id, tweet.created_at
+            );
+            let handle = self.core.handle();
+
             self.core
                 .run(tweet::unlike(tweet.id, &self.token, &handle))
                 .map_err(|e| APIError::ErasureError(e.description().to_string()))
@@ -192,10 +195,13 @@ impl<'a> TwitterAPI for RealAPI<'a> {
     }
 
     fn unretweet_tweet(&mut self, tweet: &Tweet) -> Result<(), APIError> {
-        info!("Requesting removal of tweet #{}", tweet.id);
-        let handle = self.core.handle();
-
         if tweet.retweeted.unwrap_or(false) {
+            info!(
+                "Requesting unretweet of tweet #{} posted at {}",
+                tweet.id, tweet.created_at
+            );
+            let handle = self.core.handle();
+
             self.core
                 .run(tweet::unretweet(tweet.id, &self.token, &handle))
                 .map_err(|e| APIError::ErasureError(e.description().to_string()))
@@ -210,11 +216,26 @@ impl<'a> TwitterAPI for RealAPI<'a> {
     }
 
     fn erase_tweet(&mut self, tweet: &Tweet) -> Result<(), APIError> {
-        info!("Requesting removal of tweet #{}", tweet.id);
-        let handle = self.core.handle();
+        let is_own_tweet = match tweet.user {
+            Some(ref tu) if tu.id != self.user_id => false,
+            _ => true,
+        };
 
-        if let Err(e) = self.core.run(tweet::delete(tweet.id, &self.token, &handle)) {
-            warn!("Couldn't erase tweet #{}. We don't stop processing as API may have restricted erasure for valid reasons. Error received: {}", tweet.id, e);
+        if is_own_tweet {
+            info!(
+                "Requesting removal of tweet #{} posted at {}",
+                tweet.id, tweet.created_at
+            );
+            let handle = self.core.handle();
+
+            if let Err(e) = self.core.run(tweet::delete(tweet.id, &self.token, &handle)) {
+                warn!("Couldn't erase tweet #{}. Error received: {}", tweet.id, e);
+            }
+        } else {
+            warn!(
+                "Tried to delete tweet #{} which it not posted by the user",
+                tweet.id
+            );
         }
 
         Ok(())
