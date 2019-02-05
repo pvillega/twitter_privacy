@@ -2,23 +2,32 @@ use egg_mode;
 use egg_mode::tweet;
 use egg_mode::tweet::{Timeline, Tweet};
 use std::error::Error;
-use tokio_core::reactor::Core;
 use std::fmt;
+use tokio_core::reactor::Core;
 
 /// Defines errors that can happen when calling the API methods
 #[derive(Debug, Clone, PartialEq)]
 pub enum APIError {
     InvalidToken,
     TimelineError(String),
-    UserDetailsError(String)
+    UserDetailsError(String),
+    ErasureError(String),
 }
 
 impl fmt::Display for APIError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            APIError::InvalidToken => write!(f, "Invalid or Expired Token used in the request to Twitter API"),
-            APIError::TimelineError(s) => write!(f, "Error when retrieving data from a timeline: {}", s),
+            APIError::InvalidToken => write!(
+                f,
+                "Invalid or Expired Token used in the request to Twitter API"
+            ),
+            APIError::TimelineError(s) => {
+                write!(f, "Error when retrieving data from a timeline: {}", s)
+            }
             APIError::UserDetailsError(s) => write!(f, "Failure obtaining user details: {}", s),
+            APIError::ErasureError(s) => {
+                write!(f, "Failure removing link between tweet and user: {}", s)
+            }
         }
     }
 }
@@ -30,8 +39,7 @@ pub trait TwitterAPI {
     fn validate_token(&mut self, token: &egg_mode::Token) -> Result<(), APIError>;
 
     /// Returns the unique user id (an u64) for the user with the given screen name
-    fn get_user_id(&mut self, screen_name: &str, token: &egg_mode::Token)
-        -> Result<u64, APIError>;
+    fn get_user_id(&mut self, screen_name: &str, token: &egg_mode::Token) -> Result<u64, APIError>;
 
     /// Returns the next page available of user timeline for given user id, which contains tweets published (or retweeted) by user
     fn user_timeline_next_page(
@@ -46,6 +54,15 @@ pub trait TwitterAPI {
         user_id: u64,
         token: &egg_mode::Token,
     ) -> Result<Vec<Tweet>, APIError>;
+
+    /// Unlikes a tweet the user liked before
+    fn unlike_tweet(&mut self, tweet: &Tweet, token: &egg_mode::Token) -> Result<(), APIError>;
+
+    // Unretweets a tweets the user retweeted before
+    fn unretweet_tweet(&mut self, tweet: &Tweet, token: &egg_mode::Token) -> Result<(), APIError>;
+
+    // Erases a tweet posted by the user
+    fn erase_tweet(&mut self, tweet: &Tweet, token: &egg_mode::Token) -> Result<(), APIError>;
 }
 
 /// Struct that has an implementation of TwitterAPI that calls twitter servers
@@ -69,11 +86,7 @@ impl<'a> TwitterAPI for RealAPI<'a> {
         }
     }
 
-    fn get_user_id(
-        &mut self,
-        screen_name: &str,
-        token: &egg_mode::Token,
-    ) -> Result<u64, APIError> {
+    fn get_user_id(&mut self, screen_name: &str, token: &egg_mode::Token) -> Result<u64, APIError> {
         info!("Requesting user id for user {}", screen_name);
         let handle = self.core.handle();
 
@@ -99,7 +112,10 @@ impl<'a> TwitterAPI for RealAPI<'a> {
         user_id: u64,
         token: &egg_mode::Token,
     ) -> Result<Vec<Tweet>, APIError> {
-        info!("Requesting next page of User timeline for user #{}", user_id);
+        info!(
+            "Requesting next page of User timeline for user #{}",
+            user_id
+        );
 
         let timeline = self.user_timeline.take().unwrap_or_else(|| {
             let handle = self.core.handle();
@@ -117,18 +133,67 @@ impl<'a> TwitterAPI for RealAPI<'a> {
         user_id: u64,
         token: &egg_mode::Token,
     ) -> Result<Vec<Tweet>, APIError> {
-        info!("Requesting next page of Likes timeline for user #{}", user_id);
+        info!(
+            "Requesting next page of Likes timeline for user #{}",
+            user_id
+        );
 
-        let timeline = self.likes_timeline.take()
-            .unwrap_or_else(|| {
-                let handle = self.core.handle();
-                tweet::liked_by(user_id, token, &handle).with_page_size(25)
-            });
+        let timeline = self.likes_timeline.take().unwrap_or_else(|| {
+            let handle = self.core.handle();
+            tweet::liked_by(user_id, token, &handle).with_page_size(25)
+        });
 
         fn store_tl<'r, 'a>(api: &'r mut RealAPI<'a>, tl: Timeline<'a>) {
             api.likes_timeline = Some(tl);
         }
         progress_timeline(self, timeline, store_tl)
+    }
+
+    fn unlike_tweet(&mut self, tweet: &Tweet, token: &egg_mode::Token) -> Result<(), APIError> {
+        info!("Requesting removal of tweet #{}", tweet.id);
+        let handle = self.core.handle();
+
+        if tweet.favorited.unwrap_or(false) {
+            self.core
+                .run(tweet::unlike(tweet.id, token, &handle))
+                .map_err(|e| APIError::ErasureError(e.description().to_string()))
+                .map(|_| ())
+        } else {
+            warn!(
+                "Tried to unlike tweet #{} which it not favourited by the user",
+                tweet.id
+            );
+            Ok(())
+        }
+    }
+
+    fn unretweet_tweet(&mut self, tweet: &Tweet, token: &egg_mode::Token) -> Result<(), APIError> {
+        info!("Requesting removal of tweet #{}", tweet.id);
+        let handle = self.core.handle();
+
+        if tweet.retweeted.unwrap_or(false) {
+            self.core
+                .run(tweet::unretweet(tweet.id, token, &handle))
+                .map_err(|e| APIError::ErasureError(e.description().to_string()))
+                .map(|_| ())
+        } else {
+            warn!(
+                "Tried to unretweet tweet #{} which it not retweeted by the user",
+                tweet.id
+            );
+            Ok(())
+        }
+    }
+
+    fn erase_tweet(&mut self, tweet: &Tweet, token: &egg_mode::Token) -> Result<(), APIError> {
+        info!("Requesting removal of tweet #{}", tweet.id);
+        let handle = self.core.handle();
+
+        if let Err(e) = self.core.run(tweet::delete(tweet.id, token, &handle)) {
+            warn!("Couldn't erase tweet #{}. We don't stop processing as API may have restricted erasure for valid reasons. Error received: {}", tweet.id, e);
+        }
+
+        Ok(())
     }
 }
 
@@ -165,13 +230,16 @@ pub struct TestAPI {
     pub get_user_id_answer: Result<u64, APIError>,
     pub user_timeline_next_page_answer: Result<Vec<Tweet>, APIError>,
     pub likes_timeline_next_page_answer: Result<Vec<Tweet>, APIError>,
-    pub methods_called_in_order: Vec<String>
+    pub unlike_tweet_answer: Result<(), APIError>,
+    pub unretweet_tweet_answer: Result<(), APIError>,
+    pub erase_tweet_answer: Result<(), APIError>,
+    pub methods_called_in_order: Vec<String>,
 }
 
 #[cfg(test)]
 pub fn sample_tweet(days_ago: i64) -> Tweet {
     let now = Utc::now().timestamp();
-    let seconds_past=  days_ago *24 *60 *60;
+    let seconds_past = days_ago * 24 * 60 * 60;
     let dt = NaiveDateTime::from_timestamp(now - seconds_past, 0);
     let date = DateTime::from_utc(dt, Utc);
     Tweet {
@@ -222,7 +290,10 @@ impl Default for TestAPI {
             get_user_id_answer: Ok(1),
             user_timeline_next_page_answer: Ok(vec![]),
             likes_timeline_next_page_answer: Ok(vec![]),
-            methods_called_in_order: Vec::new()
+            unlike_tweet_answer: Ok(()),
+            unretweet_tweet_answer: Ok(()),
+            erase_tweet_answer: Ok(()),
+            methods_called_in_order: Vec::new(),
         }
     }
 }
@@ -230,7 +301,8 @@ impl Default for TestAPI {
 #[cfg(test)]
 impl TwitterAPI for TestAPI {
     fn validate_token(&mut self, _token: &egg_mode::Token) -> Result<(), APIError> {
-        self.methods_called_in_order.push(String::from("validate_token"));
+        self.methods_called_in_order
+            .push(String::from("validate_token"));
         self.validate_token_answer.clone()
     }
 
@@ -239,7 +311,8 @@ impl TwitterAPI for TestAPI {
         _screen_name: &str,
         _token: &egg_mode::Token,
     ) -> Result<u64, APIError> {
-        self.methods_called_in_order.push(String::from("get_user_id"));
+        self.methods_called_in_order
+            .push(String::from("get_user_id"));
         self.get_user_id_answer.clone()
     }
 
@@ -248,7 +321,8 @@ impl TwitterAPI for TestAPI {
         _user_id: u64,
         _token: &egg_mode::Token,
     ) -> Result<Vec<Tweet>, APIError> {
-        self.methods_called_in_order.push(String::from("user_timeline_next_page"));
+        self.methods_called_in_order
+            .push(String::from("user_timeline_next_page"));
         self.user_timeline_next_page_answer.clone()
     }
 
@@ -257,7 +331,26 @@ impl TwitterAPI for TestAPI {
         _user_id: u64,
         _token: &egg_mode::Token,
     ) -> Result<Vec<Tweet>, APIError> {
-        self.methods_called_in_order.push(String::from("likes_timeline_next_page"));
+        self.methods_called_in_order
+            .push(String::from("likes_timeline_next_page"));
         self.likes_timeline_next_page_answer.clone()
+    }
+
+    fn unlike_tweet(&mut self, tweet: &Tweet, token: &egg_mode::Token) -> Result<(), APIError> {
+        self.methods_called_in_order
+            .push(String::from("unlike_tweet"));
+        self.unlike_tweet_answer.clone()
+    }
+
+    fn unretweet_tweet(&mut self, tweet: &Tweet, token: &egg_mode::Token) -> Result<(), APIError> {
+        self.methods_called_in_order
+            .push(String::from("unretweet_tweet"));
+        self.unretweet_tweet_answer.clone()
+    }
+
+    fn erase_tweet(&mut self, _tweet: &Tweet, _token: &egg_mode::Token) -> Result<(), APIError> {
+        self.methods_called_in_order
+            .push(String::from("erase_tweet"));
+        self.erase_tweet_answer.clone()
     }
 }
