@@ -2,7 +2,7 @@
 
 [![Build Status](https://travis-ci.org/pvillega/twitter_privacy.svg?branch=master)](https://travis-ci.org/pvillega/twitter_privacy)
 [![Latest Version](https://img.shields.io/crates/v/twitter_privacy.svg)](https://crates.io/crates/twitter_privacy)
-[![License:Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-yellow.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License:Apache_2.0](https://img.shields.io/badge/License-Apache_2.0-yellow.svg)](https://opensource.org/licenses/Apache-2.0)
 
 A tool to erase old tweets from your timeline. It will find all tweets older than a certain amount of days and it will:
 
