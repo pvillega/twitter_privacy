@@ -15,7 +15,7 @@ like useless tests done just to play with a library. Beware code quality :) Feed
 ## Usage
 
 You can run with `cargo run` as usual. 
-It is recommended to build the binary (`cargo build --release`) and use that binary ina  cron job that runs regularly.
+It is recommended to build the binary (`cargo build --release`) and use that binary in a cron job that runs regularly.
 
 ## Configuration
 
