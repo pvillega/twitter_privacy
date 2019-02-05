@@ -4,14 +4,33 @@ extern crate log;
 mod api;
 mod config;
 
-use api::{RealAPI, TwitterAPI};
+use api::{APIError, RealAPI, TwitterAPI};
 use chrono::prelude::*;
 use chrono::Duration;
 use config::Config;
 use config::EnvValues;
 use egg_mode::tweet::Tweet;
 use std::error::Error;
+use std::fmt;
 use tokio_core::reactor::Core;
+
+/// Defines errors we can get when executing the methods of the library
+#[derive(Debug, Clone, PartialEq)]
+pub enum Errors {
+    APIErrors(APIError),
+    EnvValueErrors(String),
+    LibErrors(String),
+}
+
+impl fmt::Display for Errors {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Errors::APIErrors(s) => write!(f, "Error interacting with Twitter API: {}", s),
+            Errors::EnvValueErrors(s) => write!(f, "Error reading environment variables: {}", s),
+            Errors::LibErrors(s) => write!(f, "Error: {}", s),
+        }
+    }
+}
 
 /// Tries to erase old tweets for a user account
 ///
@@ -30,16 +49,16 @@ use tokio_core::reactor::Core;
 ///
 /// - Configuration can't be loaded properly
 /// - Errors while interacting with Twitter API
-pub fn clear_old_tweets() -> Result<(), String> {
+pub fn clear_old_tweets() -> Result<(), Errors> {
     // create the event loop that will drive this service, or fail if we can't
     info!("Initialise Tokio core");
     let core = match Core::new() {
         Ok(c) => c,
-        Err(e) => return Err(e.description().to_string()),
+        Err(e) => return Err(Errors::LibErrors(e.description().to_string())),
     };
 
     info!("Retrieve environment values");
-    let env_values = EnvValues::load()?;
+    let env_values = EnvValues::load().map_err(Errors::EnvValueErrors)?;
 
     info!("Set up API trait for connecting to Twitter");
     let mut api = RealAPI {
@@ -49,7 +68,7 @@ pub fn clear_old_tweets() -> Result<(), String> {
     };
 
     info!("Load configuration for the application");
-    let config = config::Config::load(env_values, &mut api)?;
+    let config = config::Config::load(env_values, &mut api).map_err(Errors::APIErrors)?;
     // dbg!(&config);
 
     info!("Erase old Tweets for user");
@@ -67,7 +86,7 @@ pub fn clear_old_tweets() -> Result<(), String> {
 ///
 /// - Errors while removing elements from the timelines
 /// - Other errors when interacting with Twitter API
-fn clear_user_timelines<API: TwitterAPI>(config: &Config, api: &mut API) -> Result<(), String> {
+fn clear_user_timelines<API: TwitterAPI>(config: &Config, api: &mut API) -> Result<(), Errors> {
     info!("Processing User timeline");
     let user_tl = || api.user_timeline_next_page(config.user_id, &config.token);
     process_timeline(
@@ -108,17 +127,18 @@ fn process_timeline<F, G>(
     preserve_days: i64,
     mut tl_iterator: F,
     mut action: G,
-) -> Result<(), String>
+) -> Result<(), Errors>
 where
-    F: FnMut() -> Result<Vec<Tweet>, String>,
-    G: FnMut(&Tweet) -> Result<(), String>,
+    F: FnMut() -> Result<Vec<Tweet>, APIError>,
+    G: FnMut(&Tweet) -> Result<(), Errors>,
 {
-    let feed = tl_iterator()?;
+    let feed = tl_iterator().map_err(Errors::APIErrors)?;
 
     if feed.is_empty() {
         info!("We got to the end of the {} timeline", name);
         Ok(())
     } else {
+        info!("Processing next page of {} timeline", name);
         for tweet in &feed {
             if is_erasable(tweet.created_at, preserve_days) {
                 action(tweet)?;
@@ -129,7 +149,7 @@ where
     }
 }
 
-fn default_maintenance_action(tweet: &Tweet) -> Result<(), String> {
+fn default_maintenance_action(tweet: &Tweet) -> Result<(), Errors> {
     //TODO trigger deletion in here
     info!(
         "Found ERASABLE <@{}> [{}] F:{}/RT:{} {}",
@@ -159,9 +179,10 @@ extern crate quickcheck;
 #[cfg(test)]
 mod tests {
     mod clear_user_timeline {
-        use crate::api::TestAPI;
+        use crate::api::{APIError, TestAPI};
         use crate::clear_user_timelines;
         use crate::config::Config;
+        use crate::Errors;
 
         fn cfg() -> Config {
             let token = egg_mode::Token::Access {
@@ -179,28 +200,24 @@ mod tests {
 
         #[test]
         fn propagates_errors_from_user_tl() {
+            let err = APIError::TimelineError(String::from("bad answer"));
             let mut api = TestAPI {
-                user_timeline_next_page_answer: Err(String::from("bad answer")),
+                user_timeline_next_page_answer: Err(err.clone()),
                 ..Default::default()
             };
 
-            assert_eq!(
-                clear_user_timelines(&cfg(), &mut api),
-                Err(String::from("bad answer"))
-            )
+            assert_eq!(clear_user_timelines(&cfg(), &mut api), Err(Errors::APIErrors(err)))
         }
 
         #[test]
         fn propagates_errors_from_likes_tl() {
+            let err = APIError::TimelineError(String::from("bad answer"));
             let mut api = TestAPI {
-                likes_timeline_next_page_answer: Err(String::from("bad answer")),
+                likes_timeline_next_page_answer: Err(err.clone()),
                 ..Default::default()
             };
 
-            assert_eq!(
-                clear_user_timelines(&cfg(), &mut api),
-                Err(String::from("bad answer"))
-            )
+            assert_eq!(clear_user_timelines(&cfg(), &mut api), Err(Errors::APIErrors(err)))
         }
 
         #[test]
@@ -218,30 +235,34 @@ mod tests {
     }
     mod process_timeline {
         use crate::api::sample_tweet;
+        use crate::api::APIError;
         use crate::process_timeline;
+        use crate::Errors;
         use egg_mode::tweet::Tweet;
 
         #[test]
         fn propagates_dataset_errors() {
-            let dataset = || Err(String::from("Unexpected error"));
+            let err = APIError::TimelineError(String::from("Unexpected error"));
+            let dataset = || Err(err.clone());
             let action = |_t: &Tweet| Ok(());
 
             assert_eq!(
                 process_timeline("name", 1, dataset, action),
-                Err(String::from("Unexpected error"))
+                Err(Errors::APIErrors(err))
             );
         }
 
         #[test]
         fn propagates_action_errors() {
             let tweet_vector = vec![sample_tweet(5)];
+            let err = Errors::LibErrors(String::from("Unexpected error"));
 
             let dataset = || Ok(tweet_vector.clone());
-            let action = |_t: &Tweet| Err(String::from("Unexpected error"));
+            let action = |_t: &Tweet| Err(err.clone());
 
             assert_eq!(
                 process_timeline("name", 1, dataset, action),
-                Err(String::from("Unexpected error"))
+                Err(err)
             );
         }
 

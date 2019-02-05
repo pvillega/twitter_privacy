@@ -1,11 +1,8 @@
 mod env;
 
-use crate::api::TwitterAPI;
+use crate::api::{APIError, TwitterAPI};
 use egg_mode;
 pub use env::EnvValues;
-
-#[cfg(test)]
-use std::default::Default;
 
 #[derive(Debug)]
 pub struct Config {
@@ -30,7 +27,9 @@ impl Config {
     /// - the values in `EnvValues` aren't valid tokens to interact with the API
     /// - the `api` parameter returns some error when we use its methods
     ///
-    pub fn load<API: TwitterAPI>(env: EnvValues, api: &mut API) -> Result<Config, String> {
+    pub fn load<API: TwitterAPI>(env: EnvValues, api: &mut API) -> Result<Config, APIError> {
+        info!("Creating configuraion object");
+
         let con_token = egg_mode::KeyPair::new(env.consumer_key, env.consumer_secret);
         let access_token = egg_mode::KeyPair::new(env.access_key, env.access_secret);
         let token = egg_mode::Token::Access {
@@ -61,6 +60,7 @@ mod tests {
     use super::*;
     use crate::api::TestAPI;
     use quickcheck::{Arbitrary, Gen};
+    use std::default::Default;
 
     impl Arbitrary for EnvValues {
         fn arbitrary<G: Gen>(g: &mut G) -> EnvValues {
@@ -88,43 +88,31 @@ mod tests {
 
     #[test]
     fn error_if_invalid_token() {
+        let err = APIError::InvalidToken;
         let mut api = TestAPI {
-            validate_token_answer: Err(String::from("bad token")),
+            validate_token_answer: Err(err.clone()),
             ..Default::default()
         };
 
         // can't use assert_eq on the result as Config can't implement PartialEq trait
         match Config::load(sample_env_values(), &mut api) {
             Ok(_) => panic!("It should return an error"),
-            Err(e) => assert_eq!(e, "bad token"),
-        }
-    }
-
-    #[test]
-    fn error_if_api_token_fails() {
-        let mut api = TestAPI {
-            validate_token_answer: Err(String::from("api error")),
-            ..Default::default()
-        };
-
-        // can't use assert_eq on the result as Config can't implement PartialEq trait
-        match Config::load(sample_env_values(), &mut api) {
-            Ok(_) => panic!("It should return an error"),
-            Err(e) => assert_eq!(e, "api error"),
+            Err(e) => assert_eq!(e, err),
         }
     }
 
     #[test]
     fn error_if_api_user_id_fails() {
+        let err = APIError::UserDetailsError(String::from("api error"));
         let mut api = TestAPI {
-            get_user_id_answer: Err(String::from("api error")),
+            get_user_id_answer: Err(err.clone()),
             ..Default::default()
         };
 
         // can't use assert_eq on the result as Config can't implement PartialEq trait
         match Config::load(sample_env_values(), &mut api) {
             Ok(_) => panic!("It should return an error"),
-            Err(e) => assert_eq!(e, "api error"),
+            Err(e) => assert_eq!(e, err),
         }
     }
 

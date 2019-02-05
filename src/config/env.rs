@@ -37,6 +37,8 @@ impl EnvValues {
     ///
     /// - any of the needed environment variables is missing, or the wrong format
     pub fn load() -> Result<EnvValues, String> {
+        info!("Loading environment variables and parsing to proper types");
+        
         //We load configuration from environment. Fail early (using ?) if something is wrong
         let consumer_key = EnvValues::get_env_var(EnvValues::CONSUMER_KEY)?;
         let consumer_secret = EnvValues::get_env_var(EnvValues::CONSUMER_SECRET)?;
