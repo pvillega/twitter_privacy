@@ -7,7 +7,6 @@ mod config;
 use api::{APIError, RealAPI, TwitterAPI};
 use chrono::prelude::*;
 use chrono::Duration;
-use config::Config;
 use config::EnvValues;
 use egg_mode::tweet::Tweet;
 use std::error::Error;
@@ -59,20 +58,14 @@ pub fn clear_old_tweets() -> Result<(), Errors> {
 
     info!("Retrieve environment values");
     let env_values = EnvValues::load().map_err(Errors::EnvValueErrors)?;
+    let preserve_days = env_values.preserve_days;
+    // dbg!(&env_values);
 
     info!("Set up API trait for connecting to Twitter");
-    let mut api = RealAPI {
-        core: core,
-        user_timeline: None,
-        likes_timeline: None,
-    };
-
-    info!("Load configuration for the application");
-    let config = config::Config::load(env_values, &mut api).map_err(Errors::APIErrors)?;
-    // dbg!(&config);
+    let mut api = RealAPI::new(env_values, core).map_err(Errors::APIErrors)?;
 
     info!("Erase old Tweets for user");
-    clear_user_timelines(&config, &mut api)
+    clear_user_timelines(&mut api, preserve_days)
 }
 
 /// Processes a series of timelines for the given user to erase old tweets. The `Config` struct
@@ -86,21 +79,23 @@ pub fn clear_old_tweets() -> Result<(), Errors> {
 ///
 /// - Errors while removing elements from the timelines
 /// - Other errors when interacting with Twitter API
-fn clear_user_timelines<API: TwitterAPI>(config: &Config, api: &mut API) -> Result<(), Errors> {
+fn clear_user_timelines(api: &mut TwitterAPI, preserve_days: i64) -> Result<(), Errors> {
     info!("Processing User timeline");
-    let user_tl = || api.user_timeline_next_page(config.user_id, &config.token);
+    let user_tl = |c_api: &mut TwitterAPI| c_api.user_timeline_next_page();
     process_timeline(
         "User Timeline",
-        config.preserve_days,
+        preserve_days,
+        api,
         user_tl,
         default_maintenance_action,
     )?;
 
     info!("Processing Likes timeline");
-    let likes_tl = || api.likes_timeline_next_page(config.user_id, &config.token);
+    let likes_tl = |c_api: &mut TwitterAPI| c_api.likes_timeline_next_page();
     process_timeline(
         "Likes Timeline",
-        config.preserve_days,
+        preserve_days,
+        api,
         likes_tl,
         default_maintenance_action,
     )?;
@@ -122,17 +117,18 @@ fn clear_user_timelines<API: TwitterAPI>(config: &Config, api: &mut API) -> Resu
 ///
 /// - Errors while removing elements from the timelines
 /// - Other errors when interacting with Twitter API
-fn process_timeline<F, G>(
+fn process_timeline<'a, F, G>(
     name: &str,
     preserve_days: i64,
+    api: &mut TwitterAPI,
     mut tl_iterator: F,
     mut action: G,
 ) -> Result<(), Errors>
 where
-    F: FnMut() -> Result<Vec<Tweet>, APIError>,
-    G: FnMut(&Tweet) -> Result<(), Errors>,
+    F: FnMut(&mut TwitterAPI) -> Result<Vec<Tweet>, APIError>,
+    G: FnMut(&mut TwitterAPI, &Tweet) -> Result<(), Errors> + 'a,
 {
-    let feed = tl_iterator().map_err(Errors::APIErrors)?;
+    let feed = tl_iterator(api).map_err(Errors::APIErrors)?;
 
     if feed.is_empty() {
         info!("We got to the end of the {} timeline", name);
@@ -141,25 +137,31 @@ where
         info!("Processing next page of {} timeline", name);
         for tweet in &feed {
             if is_erasable(tweet.created_at, preserve_days) {
-                action(tweet)?;
+                action(api, tweet)?;
             }
         }
 
-        process_timeline(name, preserve_days, tl_iterator, action)
+        process_timeline(name, preserve_days, api, tl_iterator, action)
     }
 }
 
-fn default_maintenance_action(tweet: &Tweet) -> Result<(), Errors> {
-    //TODO trigger deletion in here
-    info!(
-        "Found ERASABLE <@{}> [{}] F:{}/RT:{} {}",
-        tweet.user.as_ref().unwrap().screen_name,
+fn default_maintenance_action(api: &mut TwitterAPI, tweet: &Tweet) -> Result<(), Errors> {
+    warn!(
+        "Erasing tweet created at: [{}] - F:{}|RT:{} -- {}",
         tweet.created_at,
         tweet.favorited.unwrap_or(false),
         tweet.retweeted.unwrap_or(false),
         tweet.text
     );
-    Ok(())
+
+    if tweet.favorited.unwrap_or(false) {
+        api.unlike_tweet(&tweet).map_err(Errors::APIErrors)?;
+    }
+    if tweet.retweeted.unwrap_or(false) {
+        api.unretweet_tweet(&tweet).map_err(Errors::APIErrors)?;
+    }
+
+    api.erase_tweet(&tweet).map_err(Errors::APIErrors)
 }
 
 /// Returns true if the given date is older (exclusively older!) in days than the value of `preserve_days`
@@ -178,25 +180,58 @@ extern crate quickcheck;
 
 #[cfg(test)]
 mod tests {
+    use chrono::prelude::*;
+    use egg_mode::tweet::{Tweet, TweetEntities, TweetSource};
+
+    pub fn sample_tweet(days_ago: i64) -> Tweet {
+        let now = Utc::now().timestamp();
+        let seconds_past = days_ago * 24 * 60 * 60;
+        let dt = NaiveDateTime::from_timestamp(now - seconds_past, 0);
+        let date = DateTime::from_utc(dt, Utc);
+        Tweet {
+            coordinates: None,
+            created_at: date,
+            current_user_retweet: None,
+            display_text_range: None,
+            entities: TweetEntities {
+                hashtags: Vec::new(),
+                symbols: Vec::new(),
+                urls: Vec::new(),
+                user_mentions: Vec::new(),
+                media: None,
+            },
+            extended_entities: None,
+            favorite_count: 20,
+            favorited: None,
+            id: 1,
+            in_reply_to_user_id: None,
+            in_reply_to_screen_name: None,
+            in_reply_to_status_id: None,
+            lang: String::from("und"),
+            place: None,
+            possibly_sensitive: None,
+            quoted_status_id: None,
+            quoted_status: None,
+            retweet_count: 10,
+            retweeted: None,
+            retweeted_status: None,
+            source: TweetSource {
+                name: String::from("source name"),
+                url: String::from("source url"),
+            },
+            text: String::from("a sample tweet"),
+            truncated: false,
+            user: None,
+            withheld_copyright: false,
+            withheld_in_countries: None,
+            withheld_scope: None,
+        }
+    }
+
     mod clear_user_timeline {
         use crate::api::{APIError, TestAPI};
         use crate::clear_user_timelines;
-        use crate::config::Config;
         use crate::Errors;
-
-        fn cfg() -> Config {
-            let token = egg_mode::Token::Access {
-                consumer: egg_mode::KeyPair::new("key", "secret"),
-                access: egg_mode::KeyPair::new("key", "secret"),
-            };
-
-            Config {
-                token,
-                screen_name: String::from("screen_name"),
-                user_id: 1,
-                preserve_days: 10,
-            }
-        }
 
         #[test]
         fn propagates_errors_from_user_tl() {
@@ -206,7 +241,10 @@ mod tests {
                 ..Default::default()
             };
 
-            assert_eq!(clear_user_timelines(&cfg(), &mut api), Err(Errors::APIErrors(err)))
+            assert_eq!(
+                clear_user_timelines(&mut api, 10),
+                Err(Errors::APIErrors(err))
+            )
         }
 
         #[test]
@@ -217,7 +255,10 @@ mod tests {
                 ..Default::default()
             };
 
-            assert_eq!(clear_user_timelines(&cfg(), &mut api), Err(Errors::APIErrors(err)))
+            assert_eq!(
+                clear_user_timelines(&mut api, 10),
+                Err(Errors::APIErrors(err))
+            )
         }
 
         #[test]
@@ -226,7 +267,7 @@ mod tests {
                 ..Default::default()
             };
 
-            clear_user_timelines(&cfg(), &mut api).unwrap();
+            clear_user_timelines(&mut api, 10).unwrap();
 
             let expected_calls = vec!["user_timeline_next_page", "likes_timeline_next_page"];
 
@@ -234,87 +275,202 @@ mod tests {
         }
     }
     mod process_timeline {
-        use crate::api::sample_tweet;
-        use crate::api::APIError;
+        use super::sample_tweet;
+        use crate::api::{APIError, TestAPI, TwitterAPI};
         use crate::process_timeline;
         use crate::Errors;
         use egg_mode::tweet::Tweet;
 
         #[test]
         fn propagates_dataset_errors() {
+            let mut api = TestAPI {
+                ..Default::default()
+            };
             let err = APIError::TimelineError(String::from("Unexpected error"));
-            let dataset = || Err(err.clone());
-            let action = |_t: &Tweet| Ok(());
+            let dataset = |_a: &mut TwitterAPI| Err(err.clone());
+            let action = |_a: &mut TwitterAPI, _t: &Tweet| Ok(());
 
             assert_eq!(
-                process_timeline("name", 1, dataset, action),
+                process_timeline("name", 1, &mut api, dataset, action),
                 Err(Errors::APIErrors(err))
             );
         }
 
         #[test]
         fn propagates_action_errors() {
+            let mut api = TestAPI {
+                ..Default::default()
+            };
             let tweet_vector = vec![sample_tweet(5)];
             let err = Errors::LibErrors(String::from("Unexpected error"));
 
-            let dataset = || Ok(tweet_vector.clone());
-            let action = |_t: &Tweet| Err(err.clone());
+            let dataset = |_a: &mut TwitterAPI| Ok(tweet_vector.clone());
+            let action = |_a: &mut TwitterAPI, _t: &Tweet| Err(err.clone());
 
             assert_eq!(
-                process_timeline("name", 1, dataset, action),
+                process_timeline("name", 1, &mut api, dataset, action),
                 Err(err)
             );
         }
 
         #[test]
         fn returns_ok_on_empty_dataset() {
-            let dataset = || Ok(Vec::new());
-            let action = |_t: &Tweet| Ok(());
+            let mut api = TestAPI {
+                ..Default::default()
+            };
+            let dataset = |_a: &mut TwitterAPI| Ok(Vec::new());
+            let action = |_a: &mut TwitterAPI, _t: &Tweet| Ok(());
 
-            assert_eq!(process_timeline("name", 1, dataset, action), Ok(()));
+            assert_eq!(
+                process_timeline("name", 1, &mut api, dataset, action),
+                Ok(())
+            );
         }
 
         quickcheck! {
             fn consumes_full_dataset(sz: usize) -> bool {
+                let mut api = TestAPI{..Default::default()};
                 let mut calls_made = 0;
                 let mut tweet_vector = vec![sample_tweet(5); sz];
 
-                let dataset = || {
+                let dataset = |_a: &mut TwitterAPI| {
                     match tweet_vector.pop() {
                         None => Ok(Vec::new()),
                         Some(v) => Ok(vec![v]),
                     }
                 };
-                let action = |_t: &Tweet| {
+                let action = |_a: &mut TwitterAPI, _t: &Tweet| {
                     calls_made += 1;
                     Ok(())
                 };
 
-                process_timeline("name", 1, dataset, action).unwrap();
+                process_timeline("name", 1, &mut api, dataset,  action).unwrap();
 
                 calls_made == sz
             }
             fn only_calls_action_for_tweets_within_expected_time_window(oldsz: usize, newsz: usize) -> bool {
+                let mut api = TestAPI{..Default::default()};
                 let mut calls_made = 0;
                 let mut old_vector = vec![sample_tweet(5); oldsz];
                 let mut new_vector = vec![sample_tweet(2); newsz];
                 old_vector.append(&mut new_vector);
 
-                let dataset = || {
+                let dataset = |_a: &mut TwitterAPI| {
                     match old_vector.pop() {
                         None => Ok(Vec::new()),
                         Some(v) => Ok(vec![v]),
                     }
                 };
-                let action = |_t: &Tweet| {
+                let action = |_a: &mut TwitterAPI, _t: &Tweet| {
                     calls_made += 1;
                     Ok(())
                 };
 
-                process_timeline("name", 4, dataset, action).unwrap();
+                process_timeline("name", 4, &mut api, dataset, action).unwrap();
 
                 calls_made == oldsz
             }
+        }
+    }
+
+    mod default_maintenance_action {
+        use super::sample_tweet;
+        use crate::api::{APIError, TestAPI};
+        use crate::default_maintenance_action;
+        use crate::Errors;
+
+        #[test]
+        fn propagates_unlike_api_errors() {
+            let err = APIError::ErasureError(String::from("Unexpected error"));
+            let mut api = TestAPI {
+                unlike_tweet_answer: Err(err.clone()),
+                ..Default::default()
+            };
+
+            let mut tweet = sample_tweet(1);
+            tweet.favorited = Some(true);
+
+            assert_eq!(
+                default_maintenance_action(&mut api, &tweet),
+                Err(Errors::APIErrors(err))
+            );
+        }
+
+        #[test]
+        fn propagates_unretweet_api_errors() {
+            let err = APIError::ErasureError(String::from("Unexpected error"));
+            let mut api = TestAPI {
+                unretweet_tweet_answer: Err(err.clone()),
+                ..Default::default()
+            };
+
+            let mut tweet = sample_tweet(1);
+            tweet.retweeted = Some(true);
+
+            assert_eq!(
+                default_maintenance_action(&mut api, &tweet),
+                Err(Errors::APIErrors(err))
+            );
+        }
+
+        #[test]
+        fn propagates_erase_api_errors() {
+            let err = APIError::ErasureError(String::from("Unexpected error"));
+            let mut api = TestAPI {
+                erase_tweet_answer: Err(err.clone()),
+                ..Default::default()
+            };
+
+            assert_eq!(
+                default_maintenance_action(&mut api, &sample_tweet(1)),
+                Err(Errors::APIErrors(err))
+            );
+        }
+
+        #[test]
+        fn calls_expected_methods_if_liked() {
+            let mut api = TestAPI {
+                ..Default::default()
+            };
+
+            let mut tweet = sample_tweet(1);
+            tweet.favorited = Some(true);
+
+            default_maintenance_action(&mut api, &tweet).unwrap();
+
+            let expected = vec!["unlike_tweet", "erase_tweet"];
+            assert_eq!(api.methods_called_in_order, expected);
+        }
+
+        #[test]
+        fn calls_expected_methods_if_retweeted() {
+            let mut api = TestAPI {
+                ..Default::default()
+            };
+
+            let mut tweet = sample_tweet(1);
+            tweet.retweeted = Some(true);
+
+            default_maintenance_action(&mut api, &tweet).unwrap();
+
+            let expected = vec!["unretweet_tweet", "erase_tweet"];
+            assert_eq!(api.methods_called_in_order, expected);
+        }
+
+        #[test]
+        fn calls_expected_methods_if_all() {
+            let mut api = TestAPI {
+                ..Default::default()
+            };
+
+            let mut tweet = sample_tweet(1);
+            tweet.favorited = Some(true);
+            tweet.retweeted = Some(true);
+
+            default_maintenance_action(&mut api, &tweet).unwrap();
+
+            let expected = vec!["unlike_tweet", "unretweet_tweet", "erase_tweet"];
+            assert_eq!(api.methods_called_in_order, expected);
         }
     }
     mod is_erasable {

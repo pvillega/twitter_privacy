@@ -1,144 +1,107 @@
-mod env;
+use std::env;
+use std::env::VarError;
 
-use crate::api::{APIError, TwitterAPI};
-use egg_mode;
-pub use env::EnvValues;
-
-#[derive(Debug)]
-pub struct Config {
-    pub token: egg_mode::Token,
-    pub screen_name: String,
-    pub user_id: u64,
+/// List of values that we will need to interact with Twitter.
+/// Intended to be used to build our Configuration structs
+///
+/// It is extracted as an additional object instead of being part of our configuration
+/// to facilitate testing
+#[derive(Debug, Clone)]
+pub struct EnvValues {
+    pub consumer_key: String,
+    pub consumer_secret: String,
+    pub access_key: String,
+    pub access_secret: String,
+    pub user_handle: String,
     pub preserve_days: i64,
 }
 
-impl Config {
-    /// Uses a set of environment variables and a trait that provides access to the Twitter API
-    /// to construct a configuration object, or return an error if that can't be done
+impl EnvValues {
+    // list of environment variables we will load
+    const CONSUMER_KEY: &'static str = "TP_CONSUMER_KEY";
+    const CONSUMER_SECRET: &'static str = "TP_CONSUMER_SECRET";
+    const ACCESS_KEY: &'static str = "TP_ACCESS_KEY";
+    const ACCESS_SECRET: &'static str = "TP_ACCESS_SECRET";
+    const USER_HANDLE: &'static str = "TP_USER_HANDLE";
+    const PRESERVE_DAYS: &'static str = "TP_PRESERVE_DAYS";
+
+    /// Loads a set of environmnt variables into a `EnvValues` struct
     ///
-    /// # Side Effects
+    /// # Side effects
     ///
-    /// The `api` parameter may trigger calls to Twitter API
+    /// Reads from environment variables
     ///
     /// # Error scenarios
     ///
-    /// The method will return an `Err` if:
+    /// The method will return an Err(_) if:
     ///
-    /// - the values in `EnvValues` aren't valid tokens to interact with the API
-    /// - the `api` parameter returns some error when we use its methods
-    ///
-    pub fn load<API: TwitterAPI>(env: EnvValues, api: &mut API) -> Result<Config, APIError> {
-        info!("Creating configuraion object");
+    /// - any of the needed environment variables is missing, or the wrong format
+    pub fn load() -> Result<EnvValues, String> {
+        info!("Loading environment variables and parsing to proper types");
 
-        let con_token = egg_mode::KeyPair::new(env.consumer_key, env.consumer_secret);
-        let access_token = egg_mode::KeyPair::new(env.access_key, env.access_secret);
-        let token = egg_mode::Token::Access {
-            consumer: con_token,
-            access: access_token,
+        //We load configuration from environment. Fail early (using ?) if something is wrong
+        let consumer_key = EnvValues::get_env_var(EnvValues::CONSUMER_KEY)?;
+        let consumer_secret = EnvValues::get_env_var(EnvValues::CONSUMER_SECRET)?;
+        let access_key = EnvValues::get_env_var(EnvValues::ACCESS_KEY)?;
+        let access_secret = EnvValues::get_env_var(EnvValues::ACCESS_SECRET)?;
+        let user_handle = EnvValues::get_env_var(EnvValues::USER_HANDLE)?;
+
+        let preserve_days = EnvValues::get_env_var(EnvValues::PRESERVE_DAYS)?;
+        // on this code (parse()) the macro try! or the shortcut '?' break inference, so we need to unroll them
+        let preserve_days: i64 = match preserve_days.parse::<i64>() {
+            Ok(i) => i,
+            Err(e) => {
+                return Err(format!(
+                    "Error parsing {} to an i64: {}",
+                    EnvValues::PRESERVE_DAYS,
+                    e
+                ));
+            }
         };
 
-        // if not valid, short circuit to Err
-        api.validate_token(&token)?;
+        Ok(EnvValues {
+            consumer_key,
+            consumer_secret,
+            access_key,
+            access_secret,
+            user_handle,
+            preserve_days,
+        })
+    }
 
-        info!("Welcome back, {}!", &env.user_handle);
+    // loads the environment variable with the given name
+    fn get_env_var(name: &str) -> Result<String, String> {
+        let map_if_err = EnvValues::varerror_to_string(String::from(name));
+        env::var(name).map_err(map_if_err)
+    }
 
-        let user_id = api.get_user_id(&env.user_handle, &token)?;
-
-        let cfg = Config {
-            token: token,
-            screen_name: env.user_handle,
-            user_id: user_id,
-            preserve_days: env.preserve_days,
-        };
-
-        Ok(cfg)
+    // used to map VarError to Strings with the corresponding message
+    fn varerror_to_string(name: String) -> impl Fn(VarError) -> String {
+        move |v| match v {
+            VarError::NotPresent => format!("Environment variable {:?} not found", name),
+            VarError::NotUnicode(s) => format!(
+                "Environment variable {:?} was not valid unicode: {:?}",
+                name, s
+            ),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::TestAPI;
-    use quickcheck::{Arbitrary, Gen};
-    use std::default::Default;
+    use std::ffi::OsString;
 
-    impl Arbitrary for EnvValues {
-        fn arbitrary<G: Gen>(g: &mut G) -> EnvValues {
-            EnvValues {
-                consumer_key: String::arbitrary(g),
-                consumer_secret: String::arbitrary(g),
-                access_key: String::arbitrary(g),
-                access_secret: String::arbitrary(g),
-                user_handle: String::arbitrary(g),
-                preserve_days: i64::arbitrary(g),
-            }
-        }
-    }
-
-    fn sample_env_values() -> EnvValues {
-        EnvValues {
-            consumer_key: String::from("ck"),
-            consumer_secret: String::from("cs"),
-            access_key: String::from("ak"),
-            access_secret: String::from("as"),
-            user_handle: String::from("uh"),
-            preserve_days: 1,
-        }
-    }
-
-    #[test]
-    fn error_if_invalid_token() {
-        let err = APIError::InvalidToken;
-        let mut api = TestAPI {
-            validate_token_answer: Err(err.clone()),
-            ..Default::default()
-        };
-
-        // can't use assert_eq on the result as Config can't implement PartialEq trait
-        match Config::load(sample_env_values(), &mut api) {
-            Ok(_) => panic!("It should return an error"),
-            Err(e) => assert_eq!(e, err),
-        }
-    }
-
-    #[test]
-    fn error_if_api_user_id_fails() {
-        let err = APIError::UserDetailsError(String::from("api error"));
-        let mut api = TestAPI {
-            get_user_id_answer: Err(err.clone()),
-            ..Default::default()
-        };
-
-        // can't use assert_eq on the result as Config can't implement PartialEq trait
-        match Config::load(sample_env_values(), &mut api) {
-            Ok(_) => panic!("It should return an error"),
-            Err(e) => assert_eq!(e, err),
-        }
-    }
-
+    // These tests are quite useless, just added to play around with QuickCheck
     quickcheck! {
-        fn config_has_expected_values(env_values: EnvValues, id: u64) -> bool {
-            let mut api = TestAPI {
-                get_user_id_answer: Ok(id),
-            ..Default::default()
-            };
+        fn for_not_present(n: String) -> bool {
+            let expected = format!("Environment variable {:?} not found", &n);
+            EnvValues::varerror_to_string(n)(VarError::NotPresent) == expected
+        }
 
-            let config = Config::load(env_values.clone(), &mut api).unwrap();
-
-            let id = config.user_id == id;
-            let name = config.screen_name == env_values.user_handle;
-            let days = config.preserve_days == env_values.preserve_days;
-            let token = match config.token {
-                egg_mode::Token::Bearer(_) => false,
-                egg_mode::Token::Access{consumer, access} => {
-                    consumer.key == env_values.consumer_key &&
-                    consumer.secret == env_values.consumer_secret &&
-                    access.key == env_values.access_key &&
-                    access.secret == env_values.access_secret
-                },
-            };
-
-            id && name && days && token
+        fn for_not_unicode(n: String, s: String) -> bool {
+            let expected = format!("Environment variable {:?} was not valid unicode: {:?}", &n, &s);
+            EnvValues::varerror_to_string(n)(VarError::NotUnicode(OsString::from(s))) == expected
         }
     }
 }
