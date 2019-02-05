@@ -4,6 +4,12 @@ version = "0.1.0"
 authors = ["Pere Villega <pvillega@aracon.com>"]
 edition = "2018"
 license = "Apache-2.0"
+description = "A tool to remote old tweets from your account"
+readme = "README.md"
+homepage = "https://github.com/pvillega/twitter_privacy"
+repository = "https://github.com/pvillega/twitter_privacy"
+keywords = ["cli", "twitter", "delete", "erasure", "privacy"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 dotenv = "0.13.0" # Manage .env files
