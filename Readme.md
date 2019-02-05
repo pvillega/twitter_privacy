@@ -6,7 +6,8 @@ A tool to erase old tweets from your timeline. It will find all tweets older tha
 - undo retweets
 - undo favourite/likes
 
-Note that unfortunately some old tweets are not accessible via the API, so you can't get rid of them.
+Note that unfortunately some old tweets are not accessible via the API, so you can't get rid of them. Also note the API only allows
+access for direct messages within the last 30 days, older ones are not available in the API, so I skip those as it won't remove much data.
 
 Written in Rust as a project to learn more about the language and associated tooling. So you may see things that don't make much sense,
 like useless tests done just to play with a library. Beware code quality :) Feedback always welcome.
