@@ -4,7 +4,7 @@ use egg_mode::tweet;
 use egg_mode::tweet::{Timeline, Tweet};
 use std::error::Error;
 use std::fmt;
-use tokio_core::reactor::Core;
+use tokio::runtime::current_thread::block_on_all;
 
 /// Defines errors that can happen when calling the API methods
 #[derive(Debug, Clone, PartialEq)]
@@ -54,7 +54,6 @@ pub trait TwitterAPI {
 
 /// Struct that has an implementation of TwitterAPI that calls twitter servers
 pub struct RealAPI<'a> {
-    pub core: Core,
     pub user_id: u64,
     pub token: egg_mode::Token,
     pub user_timeline: Option<Timeline<'a>>,
@@ -75,7 +74,7 @@ impl<'a> RealAPI<'a> {
     /// - the values in `EnvValues` aren't valid tokens to interact with the API
     /// - the `api` parameter returns some error when we use its methods
     ///
-    pub fn new(env: EnvValues, core: Core) -> Result<RealAPI<'a>, APIError> {
+    pub fn new(env: EnvValues) -> Result<RealAPI<'a>, APIError> {
         info!("Creating Real API object");
 
         let con_token = egg_mode::KeyPair::new(env.consumer_key, env.consumer_secret);
@@ -86,9 +85,8 @@ impl<'a> RealAPI<'a> {
         };
 
         let mut api = RealAPI {
-            core: core,
             user_id: 0,
-            token: token,
+            token,
             user_timeline: None,
             likes_timeline: None,
         };
@@ -103,9 +101,8 @@ impl<'a> RealAPI<'a> {
 
     fn validate_token(api: &mut RealAPI) -> Result<(), APIError> {
         info!("Verifying validity of Token by querying Twitter API");
-        let handle = api.core.handle();
 
-        if let Err(err) = api.core.run(egg_mode::verify_tokens(&api.token, &handle)) {
+        if let Err(err) = block_on_all(egg_mode::verify_tokens(&api.token)) {
             error!("We've hit an error using your tokens: {:?}. Invalid tokens, the application can't continue.", err);
             Err(APIError::InvalidToken)
         } else {
@@ -116,11 +113,8 @@ impl<'a> RealAPI<'a> {
 
     fn obtain_user_id(api: &mut RealAPI, screen_name: &str) -> Result<(), APIError> {
         info!("Requesting user id for user {}", screen_name);
-        let handle = api.core.handle();
 
-        let query_for_user = api
-            .core
-            .run(egg_mode::user::show(screen_name, &api.token, &handle));
+        let query_for_user = block_on_all(egg_mode::user::show(screen_name, &api.token));
 
         let user_info = match query_for_user {
             Ok(uinfo) => uinfo,
@@ -146,8 +140,7 @@ impl<'a> TwitterAPI for RealAPI<'a> {
         );
 
         let timeline = self.user_timeline.take().unwrap_or_else(|| {
-            let handle = self.core.handle();
-            tweet::user_timeline(self.user_id, true, true, &self.token, &handle).with_page_size(25)
+            tweet::user_timeline(self.user_id, true, true, &self.token).with_page_size(25)
         });
 
         fn store_tl<'r, 'a>(api: &'r mut RealAPI<'a>, tl: Timeline<'a>) {
@@ -163,8 +156,7 @@ impl<'a> TwitterAPI for RealAPI<'a> {
         );
 
         let timeline = self.likes_timeline.take().unwrap_or_else(|| {
-            let handle = self.core.handle();
-            tweet::liked_by(self.user_id, &self.token, &handle).with_page_size(25)
+            tweet::liked_by(self.user_id, &self.token).with_page_size(25)
         });
 
         fn store_tl<'r, 'a>(api: &'r mut RealAPI<'a>, tl: Timeline<'a>) {
@@ -179,10 +171,8 @@ impl<'a> TwitterAPI for RealAPI<'a> {
                 "Requesting unlike of tweet #{} posted at {}",
                 tweet.id, tweet.created_at
             );
-            let handle = self.core.handle();
 
-            self.core
-                .run(tweet::unlike(tweet.id, &self.token, &handle))
+            block_on_all(tweet::unlike(tweet.id, &self.token))
                 .map_err(|e| APIError::ErasureError(e.description().to_string()))
                 .map(|_| ())
         } else {
@@ -200,10 +190,8 @@ impl<'a> TwitterAPI for RealAPI<'a> {
                 "Requesting unretweet of tweet #{} posted at {}",
                 tweet.id, tweet.created_at
             );
-            let handle = self.core.handle();
 
-            self.core
-                .run(tweet::unretweet(tweet.id, &self.token, &handle))
+            block_on_all(tweet::unretweet(tweet.id, &self.token))
                 .map_err(|e| APIError::ErasureError(e.description().to_string()))
                 .map(|_| ())
         } else {
@@ -226,9 +214,8 @@ impl<'a> TwitterAPI for RealAPI<'a> {
                 "Requesting removal of tweet #{} posted at {}",
                 tweet.id, tweet.created_at
             );
-            let handle = self.core.handle();
 
-            if let Err(e) = self.core.run(tweet::delete(tweet.id, &self.token, &handle)) {
+            if let Err(e) = block_on_all(tweet::delete(tweet.id, &self.token)) {
                 warn!("Couldn't erase tweet #{}. Error received: {}", tweet.id, e);
             }
         } else {
@@ -251,7 +238,7 @@ where
     F: Fn(&'r mut RealAPI<'a>, Timeline<'a>) -> (),
 {
     let future_timeline = timeline.older(None);
-    match api.core.run(future_timeline) {
+    match block_on_all(future_timeline) {
         Ok((new_tl, feed)) => {
             store_tl(api, new_tl);
             Ok(feed.response)

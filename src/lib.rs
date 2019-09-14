@@ -9,9 +9,7 @@ use chrono::prelude::*;
 use chrono::Duration;
 use config::EnvValues;
 use egg_mode::tweet::Tweet;
-use std::error::Error;
 use std::fmt;
-use tokio_core::reactor::Core;
 
 /// Defines errors we can get when executing the methods of the library
 #[derive(Debug, Clone, PartialEq)]
@@ -49,20 +47,13 @@ impl fmt::Display for Errors {
 /// - Configuration can't be loaded properly
 /// - Errors while interacting with Twitter API
 pub fn clear_old_tweets() -> Result<(), Errors> {
-    // create the event loop that will drive this service, or fail if we can't
-    info!("Initialise Tokio core");
-    let core = match Core::new() {
-        Ok(c) => c,
-        Err(e) => return Err(Errors::LibErrors(e.description().to_string())),
-    };
-
     info!("Retrieve environment values");
     let env_values = EnvValues::load().map_err(Errors::EnvValueErrors)?;
     let preserve_days = env_values.preserve_days;
     // dbg!(&env_values);
 
     info!("Set up API trait for connecting to Twitter");
-    let mut api = RealAPI::new(env_values, core).map_err(Errors::APIErrors)?;
+    let mut api = RealAPI::new(env_values).map_err(Errors::APIErrors)?;
 
     info!("Erase old Tweets for user");
     clear_user_timelines(&mut api, preserve_days)
@@ -79,9 +70,9 @@ pub fn clear_old_tweets() -> Result<(), Errors> {
 ///
 /// - Errors while removing elements from the timelines
 /// - Other errors when interacting with Twitter API
-fn clear_user_timelines(api: &mut TwitterAPI, preserve_days: i64) -> Result<(), Errors> {
+fn clear_user_timelines(api: &mut dyn TwitterAPI, preserve_days: i64) -> Result<(), Errors> {
     info!("Processing User timeline");
-    let user_tl = |c_api: &mut TwitterAPI| c_api.user_timeline_next_page();
+    let user_tl = |c_api: &mut dyn TwitterAPI| c_api.user_timeline_next_page();
     process_timeline(
         "User Timeline",
         preserve_days,
@@ -91,7 +82,7 @@ fn clear_user_timelines(api: &mut TwitterAPI, preserve_days: i64) -> Result<(), 
     )?;
 
     info!("Processing Likes timeline");
-    let likes_tl = |c_api: &mut TwitterAPI| c_api.likes_timeline_next_page();
+    let likes_tl = |c_api: &mut dyn TwitterAPI| c_api.likes_timeline_next_page();
     process_timeline(
         "Likes Timeline",
         preserve_days,
@@ -120,13 +111,13 @@ fn clear_user_timelines(api: &mut TwitterAPI, preserve_days: i64) -> Result<(), 
 fn process_timeline<'a, F, G>(
     name: &str,
     preserve_days: i64,
-    api: &mut TwitterAPI,
+    api: &mut dyn TwitterAPI,
     mut tl_iterator: F,
     mut action: G,
 ) -> Result<(), Errors>
 where
-    F: FnMut(&mut TwitterAPI) -> Result<Vec<Tweet>, APIError>,
-    G: FnMut(&mut TwitterAPI, &Tweet) -> Result<(), Errors> + 'a,
+    F: FnMut(&mut dyn TwitterAPI) -> Result<Vec<Tweet>, APIError>,
+    G: FnMut(&mut dyn TwitterAPI, &Tweet) -> Result<(), Errors> + 'a,
 {
     let feed = tl_iterator(api).map_err(Errors::APIErrors)?;
 
@@ -145,7 +136,7 @@ where
     }
 }
 
-fn default_maintenance_action(api: &mut TwitterAPI, tweet: &Tweet) -> Result<(), Errors> {
+fn default_maintenance_action(api: &mut dyn TwitterAPI, tweet: &Tweet) -> Result<(), Errors> {
     warn!(
         "Erasing tweet created at: [{}] - F:{}|RT:{} -- {}",
         tweet.created_at,
@@ -287,8 +278,8 @@ mod tests {
                 ..Default::default()
             };
             let err = APIError::TimelineError(String::from("Unexpected error"));
-            let dataset = |_a: &mut TwitterAPI| Err(err.clone());
-            let action = |_a: &mut TwitterAPI, _t: &Tweet| Ok(());
+            let dataset = |_a: &mut dyn TwitterAPI| Err(err.clone());
+            let action = |_a: &mut dyn TwitterAPI, _t: &Tweet| Ok(());
 
             assert_eq!(
                 process_timeline("name", 1, &mut api, dataset, action),
@@ -304,8 +295,8 @@ mod tests {
             let tweet_vector = vec![sample_tweet(5)];
             let err = Errors::LibErrors(String::from("Unexpected error"));
 
-            let dataset = |_a: &mut TwitterAPI| Ok(tweet_vector.clone());
-            let action = |_a: &mut TwitterAPI, _t: &Tweet| Err(err.clone());
+            let dataset = |_a: &mut dyn TwitterAPI| Ok(tweet_vector.clone());
+            let action = |_a: &mut dyn TwitterAPI, _t: &Tweet| Err(err.clone());
 
             assert_eq!(
                 process_timeline("name", 1, &mut api, dataset, action),
@@ -318,8 +309,8 @@ mod tests {
             let mut api = TestAPI {
                 ..Default::default()
             };
-            let dataset = |_a: &mut TwitterAPI| Ok(Vec::new());
-            let action = |_a: &mut TwitterAPI, _t: &Tweet| Ok(());
+            let dataset = |_a: &mut dyn TwitterAPI| Ok(Vec::new());
+            let action = |_a: &mut dyn TwitterAPI, _t: &Tweet| Ok(());
 
             assert_eq!(
                 process_timeline("name", 1, &mut api, dataset, action),
@@ -333,13 +324,13 @@ mod tests {
                 let mut calls_made = 0;
                 let mut tweet_vector = vec![sample_tweet(5); sz];
 
-                let dataset = |_a: &mut TwitterAPI| {
+                let dataset = |_a: &mut dyn TwitterAPI| {
                     match tweet_vector.pop() {
                         None => Ok(Vec::new()),
                         Some(v) => Ok(vec![v]),
                     }
                 };
-                let action = |_a: &mut TwitterAPI, _t: &Tweet| {
+                let action = |_a: &mut dyn TwitterAPI, _t: &Tweet| {
                     calls_made += 1;
                     Ok(())
                 };
@@ -355,13 +346,13 @@ mod tests {
                 let mut new_vector = vec![sample_tweet(2); newsz];
                 old_vector.append(&mut new_vector);
 
-                let dataset = |_a: &mut TwitterAPI| {
+                let dataset = |_a: &mut dyn TwitterAPI| {
                     match old_vector.pop() {
                         None => Ok(Vec::new()),
                         Some(v) => Ok(vec![v]),
                     }
                 };
-                let action = |_a: &mut TwitterAPI, _t: &Tweet| {
+                let action = |_a: &mut dyn TwitterAPI, _t: &Tweet| {
                     calls_made += 1;
                     Ok(())
                 };

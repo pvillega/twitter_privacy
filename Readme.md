@@ -18,7 +18,7 @@ like useless tests done just to play with a library. Beware code quality :) Feed
 
 ## Usage
 
-You can run with `cargo run` as usual. 
+You can run with `cargo run` as usual.
 It is recommended to build the binary (`cargo build --release`) and use that binary in a cron job that runs regularly.
 
 ## Configuration
@@ -36,17 +36,17 @@ export TP_PRESERVE_DAYS=60
 
 You can use an `.env` file to define the values. The file must be at the same location you runt he executable from. Otherwise, just set up the environemnt variables.
 
-# Contribution policy
+## Contribution policy
 
 Contributions via GitHub pull requests are gladly accepted from their original author. Along with any pull requests, please state that the contribution is your original work and that you license the work to the project under the project's open source license. Whether or not you state this explicitly, by submitting any copyrighted material via pull request, email, or other means you agree to license the material under the project's open source license and warrant that you have the legal authority to do so.
 
-# License
+## License
 
 This code is open source software licensed under the Apache-2.0 license.
 
-# Motivation behind the project
+## Motivation behind the project
 
-Privacy is a tricky subject and can't be addressed in a Readme file. At the moment of this writing social media seems to be a liability for users. On one hand, social media *can* be useful as a way to obtain information from selected channels, tailored to your needs or tastes. On the other, interactions with people in social media *can* be hard to navigate correctly. 
+Privacy is a tricky subject and can't be addressed in a Readme file. At the moment of this writing social media seems to be a liability for users. On one hand, social media *can* be useful as a way to obtain information from selected channels, tailored to your needs or tastes. On the other, interactions with people in social media *can* be hard to navigate correctly.
 
 It seems in some scenarios tehse interactions have had a direct impact on the employability of people. I'm not talking about some famous person exposing views that go against   basic tenets of the Human Rights Declaration; I refer to more mundane, albeit confrontational, interactions between people that have had lasting consequences in the real world.
 

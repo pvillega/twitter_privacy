@@ -5,7 +5,7 @@ extern crate twitter_privacy;
 extern crate log;
 extern crate dotenv;
 extern crate pretty_env_logger;
-extern crate tokio_core;
+extern crate tokio;
 
 fn main() {
     // load .env values to env::var
@@ -16,7 +16,7 @@ fn main() {
         eprintln!("Error initialising `pretty_env_logger` {}", e);
         panic!("Missing logger. Aborting!")
     };
-    
+
     // call method to clean old tweets. All the logic happens in the lib. We receive a Result and exit accordingly.
     match twitter_privacy::clear_old_tweets() {
         Ok(_) => info!("Tweets erased, stopping process. Thanks for using this application!"),
@@ -26,5 +26,3 @@ fn main() {
         },
     };
 }
-
-
