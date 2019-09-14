@@ -12,13 +12,13 @@ keywords = ["cli", "twitter", "delete", "erasure", "privacy"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-dotenv = "0.13.0" # Manage .env files
+dotenv = "0.14.1" # Manage .env files
 log = "0.4" # logger
-pretty_env_logger = "0.3.0" # logger to std err on top of `log`
+pretty_env_logger = "0.3.1" # logger to std err on top of `log`
 egg-mode = "0.12.0" # twitter api in Rust
 tokio-core = "0.1" # async library for network requests required by egg_mode. Beware it is an old lib, superseeded by 'tokio'. Newer egg_mode will update accordingly.
 chrono = "0.4" # Datetime library for date manipulation
 
 [dev-dependencies]
-pretty_assertions = "0.5.1" # Improve diff on assertions on unit tests
-quickcheck = "0.8.0" # Property testing with random input
+pretty_assertions = "0.6.1" # Improve diff on assertions on unit tests
+quickcheck = "0.9.0" # Property testing with random input

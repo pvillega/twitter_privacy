@@ -2,3 +2,6 @@
 **/*.rs.bk
 
 .env
+.metals/
+.history/
+.vscode/
